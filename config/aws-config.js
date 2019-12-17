@@ -6,10 +6,13 @@ const clonedeep = require('lodash.clonedeep')
 const merge = require('lodash.merge')
 
 const localstack = process.env.LOCALSTACK || 0
+const useOIDC = 'OIDC_ENABLED' in process.env
 
 let secretsManagerConfig = {}
 let systemManagerConfig = {}
 let stsConfig = {}
+let webIdentityToken = ''
+let providerId = ''
 
 if (localstack) {
   secretsManagerConfig = {
@@ -24,6 +27,15 @@ if (localstack) {
     endpoint: process.env.LOCALSTACK_STS_URL || 'http://localhost:4592',
     region: process.env.AWS_REGION || 'us-west-2'
   }
+}
+
+if (useOIDC) {
+  const fs = require('fs')
+  webIdentityToken = fs.readFileSync(
+    process.env[AWS_WEB_IDENTITY_TOKEN_FILE] ||
+    '/var/run/secrets/eks.amazonaws.com/serviceaccount/token'
+  )
+  providerId = process.env[AWS_PROVIDER_ID] || 'www.amazon.com'
 }
 
 module.exports = {
@@ -41,8 +53,19 @@ module.exports = {
   },
   assumeRole: (assumeRoleOpts) => {
     const sts = new AWS.STS(stsConfig)
+    let _assumeRole = sts.assumeRole
+    let options = assumeRoleOpts
+
+    if (useOIDC) {
+      _assumeRole = sts.assumeRoleWithWebIdentity
+      options = {
+        ...assumeRoleOpts,
+        ProviderId: providerId,
+        WebIdentityToken: webIdentityToken
+      }
+    }
     return new Promise((resolve, reject) => {
-      sts.assumeRole(assumeRoleOpts, (err, res) => {
+      _assumeRole(options, (err, res) => {
         if (err) {
           return reject(err)
         }
